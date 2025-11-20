@@ -1,4 +1,4 @@
-// server.js - Full NAWALA + KOMINFO Checker API
+// server.js - Full NAWALA + KOMINFO Checker API (GET + POST Ready)
 
 import express from "express";
 import cors from "cors";
@@ -9,6 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Rate Limit
 const WINDOW_MS = 10 * 60 * 1000;
 const MAX_REQUESTS = 1000;
 let rateStore = {};
@@ -25,10 +26,11 @@ function checkRateLimit(ip) {
   return {
     allowed: true,
     remaining: MAX_REQUESTS - rateStore[ip].count,
-    resetTime: rateStore[ip].resetTime
+    resetTime: rateStore[ip].resetTime,
   };
 }
 
+// Kominfo/Nawala IP block list
 const BLOCK_IPS = [
   "180.178.101.216",
   "180.178.101.217",
@@ -36,6 +38,7 @@ const BLOCK_IPS = [
   "36.37.64.14"
 ];
 
+// Block keywords (internet positif, trust positif, dll)
 const BLOCK_KEYWORDS = [
   "internet positif",
   "internet sehat",
@@ -45,12 +48,14 @@ const BLOCK_KEYWORDS = [
   "site blocked"
 ];
 
+// Cleanup domain
 function cleanDomain(raw) {
   let d = raw.trim();
   d = d.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
   return d.toLowerCase();
 }
 
+// Core function cek domain
 async function checkSingleDomain(domain) {
   const result = {
     originalUrl: domain,
@@ -62,6 +67,7 @@ async function checkSingleDomain(domain) {
   const clean = cleanDomain(domain);
 
   try {
+    // Check IP block
     let ipBlocked = false;
     try {
       const records = await dns.resolve4(clean);
@@ -70,6 +76,7 @@ async function checkSingleDomain(domain) {
       }
     } catch (_) {}
 
+    // Check HTTP block
     let httpBlocked = false;
 
     async function tryFetch(url) {
@@ -107,24 +114,82 @@ async function checkSingleDomain(domain) {
   return result;
 }
 
+//
+// ==========================
+// POST /check (JSON)
+// ==========================
+//
 app.post("/check", async (req, res) => {
   try {
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.connection.remoteAddress;
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] ||
+               req.connection.remoteAddress;
 
     const rate = checkRateLimit(ip);
     if (!rate.allowed) {
-      return res.status(429).json({ error: "Rate limit exceeded", results: [], remaining: 0, resetTime: rate.resetTime });
+      return res.status(429).json({
+        error: "Rate limit exceeded",
+        results: [],
+        remaining: 0,
+        resetTime: rate.resetTime
+      });
     }
 
     const domains = req.body.domains || [];
     const results = await Promise.all(domains.map(checkSingleDomain));
 
-    res.json({ results, remaining: rate.remaining, resetTime: rate.resetTime });
+    res.json({
+      results,
+      remaining: rate.remaining,
+      resetTime: rate.resetTime
+    });
 
   } catch (e) {
     res.status(500).json({ error: "Server error", results: [] });
   }
 });
 
+//
+// ==========================
+// GET /check?domains=a.com,b.com
+// ==========================
+//
+app.get("/check", async (req, res) => {
+  try {
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] ||
+               req.connection.remoteAddress;
+
+    const rate = checkRateLimit(ip);
+    if (!rate.allowed) {
+      return res.status(429).json({
+        error: "Rate limit exceeded",
+        results: [],
+        remaining: 0,
+        resetTime: rate.resetTime
+      });
+    }
+
+    const domainsParam = req.query.domains || "";
+    const domains = domainsParam.split(",").map(d => d.trim()).filter(Boolean);
+
+    if (domains.length === 0) {
+      return res.json({ error: "No domains provided", results: [] });
+    }
+
+    const results = await Promise.all(domains.map(checkSingleDomain));
+
+    res.json({
+      results,
+      remaining: rate.remaining,
+      resetTime: rate.resetTime
+    });
+
+  } catch (e) {
+    res.status(500).json({ error: "Server error", results: [] });
+  }
+});
+
+// Run server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("NAWALA Checker API running on port", PORT));
+app.listen(PORT, () =>
+  console.log("NAWALA Checker API running on port", PORT)
+);
