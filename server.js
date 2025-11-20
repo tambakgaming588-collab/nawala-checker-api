@@ -6,51 +6,37 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const SKIDDLE_API = "https://check.skiddle.id/check?domains=";
+app.get("/api/check", async (req, res) => {
+  const domain = req.query.domain;
 
-// Rate limit sederhana (1000 / 10 menit)
-let lastReset = Date.now();
-let usage = {};
-
-function rateLimit(ip) {
-  const now = Date.now();
-  if (now - lastReset > 600000) {
-    lastReset = now;
-    usage = {};
+  if (!domain) {
+    return res.status(400).json({
+      status: "error",
+      message: "Domain tidak ditemukan"
+    });
   }
-  usage[ip] = (usage[ip] || 0) + 1;
 
-  if (usage[ip] > 1000) return false;
-  return true;
-}
+  const url = "https://nawalacheck.skiddle.id/?domain=" + encodeURIComponent(domain);
 
-// API kamu sendiri, mirroring ke Skiddle
-app.post("/check", async (req, res) => {
   try {
-    const ip =
-      req.headers["x-forwarded-for"]?.split(",")[0] ||
-      req.connection.remoteAddress;
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
 
-    if (!rateLimit(ip)) {
-      return res.status(429).json({ error: "Rate limit exceeded" });
-    }
+    const result = await response.text();
+    res.send(result);
 
-    const domains = req.body.domains;
-    if (!domains || !domains.length) {
-      return res.status(400).json({ error: "No domains provided" });
-    }
-
-    const url = SKIDDLE_API + domains.join(",");
-    const response = await fetch(url);
-    const data = await response.json();
-
-    res.json(data);
   } catch (err) {
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({
+      status: "error",
+      message: "Gagal mengambil data dari skiddle",
+      error: err.message
+    });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log("🔥 Skiddle Mirror API berjalan di port", PORT)
-);
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
